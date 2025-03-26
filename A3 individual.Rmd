@@ -1,0 +1,420 @@
+---
+title: 'A3: Retail Product Sales Data Analysis and Reporting'
+author: "Aleksas Slavinskas"
+date: "2025-01-30"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+#Data Loading & Exploration, Cleaning and Handling Missing Values
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+```{r}
+# Load necessary libraries
+library(dplyr)
+library(readr)
+
+# Loading the dataset
+dataset <- read_csv("train.csv", show_col_types = FALSE)
+
+# loading the first 10 rows and all columns of the data set, looking at data types per column and all column names
+dataset
+str(dataset)
+```
+#Data cleaning: missing values, date format
+```{r}
+# Checking for missing values in the dataset
+missing_data <- dataset %>% summarise(across(everything(), ~sum(is.na(.))))
+
+# Displaying the count of missing values for each column
+print(missing_data)
+```
+```{r}
+str(dataset) #double checking if there are any unexpected data types
+```
+```{r}
+dataset$`Order Date` <- as.Date(dataset$`Order Date`, format = "%d/%m/%Y") # making sure the dates are converted to a appropriate format
+dataset$`Ship Date`  <- as.Date(dataset$`Ship Date`, format = "%d/%m/%Y")
+
+result <- subset(dataset, `Order Date` > `Ship Date`) # Subseting rows where Order Date is higher then Ship Date
+
+print(result) # Displaying the resulting rows
+```
+#Duplicate row checking, postal code format checking, checking unique countries
+```{r} 
+#checking for duplicate rows
+duplicates <- dataset[duplicated(dataset), ]
+print("Duplicate Rows:")
+print(duplicates)
+
+# Finding how many different countries there are
+unique_countries <- unique(dataset$Country)
+print("Unique Countries:")
+print(unique_countries)
+# Since there is only USA, when can check if the amount of Unique states is appropriate, since there are 50 states in USA
+unique_states_count <- length(unique(dataset$State))
+print("Number of Unique States:")
+print(unique_states_count)
+# since it is USA, all standard zipcodes must be 5-digit
+
+```
+```{r}
+# since it is USA, all standard zipcodes must be 5-digit, chekcing:
+dataset$`Postal Code` <- as.character(dataset$`Postal Code`) # Ensuring Postal Code is a string
+invalid_zip <- dataset %>% filter(nchar(`Postal Code`) < 5 | grepl("\\D", `Postal Code`)) # Identifying incorrect Postal codes - less than 5 characters or containing non-numeric values, since the standard ZIP code in USA is always 5 digit number (part of this line was done with Ai (ChatGPT, 2025)  as "grepl("\\D", `Postal Code`)" was unknown before )
+
+invalid_states <- invalid_zip %>% select(`State`) %>% distinct() # Displaying unique state names with at least one invalid ZIP code
+
+print("Incorrect ZIP Codes Found:")
+print(invalid_states)
+
+```
+#fixing postal codes, looking for invalid sales figures
+```{r}
+dataset$`Postal Code` <- sprintf("%05s", dataset$`Postal Code`)# Fixing ZIP codes by adding a 0 infront
+invalid_zip_after_fix <- dataset %>% filter(nchar(`Postal Code`) < 5 | grepl("\\D", `Postal Code`)) # double checking after those with the missing 0 are fixed
+invalid_zip <- dataset %>% filter(nchar(`Postal Code`) < 5 | grepl("\\D", `Postal Code`)) # Identifing incorrect Postal codes - less than 5 characters or containing non-numeric values, since the standard ZIP code in USA is always 5 digit number
+print("Incorrect ZIP Codes Found:")
+print(invalid_zip)
+
+```
+```{r}
+wrong_sales <- dataset %>% filter(!is.numeric(Sales) | Sales < 0) # Identifying rows where sales are negative or not numeric
+print("incorrect sales figures:")
+print(wrong_sales)
+```
+#Saving cleaned dataset
+```{r}
+write.csv(dataset, file = "cleaned_dataset.csv", row.names = FALSE) # Exporting the cleaned dataset to a CSV file
+```
+#Data Transformation and Feature Engineering
+#Creating a new column for Order Month
+```{r}
+# Creating a new column 'Order Month' containing the month as a two-digit number (e.g., "01" for January)
+dataset$`Order_Month` <- format(dataset$`Order Date`, "%m") # we create  a new column by extracting the month from the Order Date
+
+head(dataset)
+```
+#Creating a new feature for Delivery Time
+```{r}
+# Creating a new column 'Delivery Time' (in days) as the difference between Ship Date and Order Date
+dataset$`Delivery Time (Days)` <- as.numeric(dataset$`Ship Date` - dataset$`Order Date`)
+head(dataset)
+```
+#Categorizing the orders based on Sales Level
+```{r}
+# Creating a new column named 'Sales_Level' using case_when and before imported dplyr library
+dataset <- dataset %>%
+  mutate(Sales_Level = case_when(
+    Sales < 100 ~ "Low",
+    Sales <= 500 ~ "Medium",
+    Sales > 500 ~ "High"
+  ))
+
+head(dataset)
+```
+#Create a binary feature for "Is Express Shipping" (there is no express shipping, so first class was chosen instead)
+```{r}
+dataset <- dataset %>%
+  mutate(Is_First_Class_Shipping = if_else(`Ship Mode` == "First Class", 1, 0))
+
+
+first_class_count <- sum(dataset$Is_First_Class_Shipping, na.rm = TRUE) # Counting the number of First Class shipments
+
+print(paste("Total number of First Class shipments:", first_class_count)) #printing the total number of First Class shipments
+
+head(dataset) # Displaying the first few rows of the updated dataset just to make sure everything is ok
+```
+#Saving the dataset with additional features as CSV
+```{r}
+write.csv(dataset, file = "cleaned_dataset_wFeatures.csv", row.names = FALSE) # Exporting the cleaned dataset to a CSV file
+```
+#Grouping and Aggregation
+#Grouping the dataset by Product Name and Region, then calculating the total sales for each combination, displaying results
+```{r}
+products_per_region <- dataset %>%
+  group_by(`Product Name`, Region) %>%  # Group by product and region
+  summarise(Total_Sales = sum(Sales, na.rm = TRUE), .groups = "drop") %>%  # Sum sales for each product-region combo
+  arrange(Region, desc(Total_Sales))  # Sort within each region by Total Sales (descending)
+
+# Display the result
+print(products_per_region)
+
+```
+#Identifying the top 5 products in each region based on total sales
+```{r}
+top5_products_region <- dataset %>%
+  group_by(`Product Name`, Region) %>% #we group the dataset by the two variables, first Product Name, then Region (Product Name per Region(s))
+  summarise(Total_Sales = sum(Sales, na.rm = TRUE), .groups = "drop") %>% #We sum the Sales column every time the new Group repeats
+  group_by(Region) %>%
+  slice_max(order_by = Total_Sales, n = 5, with_ties = FALSE) %>% # now we just grouped the data per region and display top 5 results
+  #ungroup() #we can un group in case we need to do something that intervenies. 
+
+print(top5_products_region)
+```
+#Data Vizualization
+#Making a line-chart vizualization of yearly and monhtly sales trends
+```{r}
+# Loading additional necessary libraries to make plots, and in case we need some advanced calculations regarding dates
+library(ggplot2)
+library(lubridate)
+
+# Double chekcing that Order Date is in Date format
+dataset$`Order Date` <- as.Date(dataset$`Order Date`, format = "%m/%d/%Y")
+
+# Extracting Year and Month as ordered factors for proper plotting
+dataset <- dataset %>%
+  mutate(
+    Order_Year = year(`Order Date`),
+    Order_Month = factor(month(`Order Date`, label = TRUE, abbr = TRUE), levels = month.abb)
+  )
+
+# Aggregating total sales by Year and Month
+monthly_sales <- dataset %>% group_by(Order_Year, Order_Month) %>% summarise(Total_Sales = sum(Sales, na.rm = TRUE), .groups = "drop")
+
+# Ploting the line chart
+ggplot(monthly_sales, aes(x = Order_Month, y = Total_Sales, group = Order_Year, color = as.factor(Order_Year))) +
+  geom_line(size = 1) +  # Line plot
+  geom_point(size = 3) +  # We can add points for clarity
+  labs(
+    title = "Monthly Sales Trend (Grouped by Year)",
+    x = "Month",
+    y = "Total Sales",
+    color = "Year"
+  )
+```
+#Making a line-chart vizualization of monhtly sales trends by region
+```{r}
+# Extracting Month as an ordered factor for proper plotting
+dataset <- dataset %>%
+  mutate(Order_Month = factor(month(`Order Date`, label = TRUE, abbr = TRUE), levels = month.abb))
+
+# Aggregatting total sales by Region and Month
+monthly_sales_region <- dataset %>% group_by(Order_Month, Region) %>% summarise(Total_Sales = sum(Sales, na.rm = TRUE), .groups = "drop")
+
+# Ploting the line chart
+ggplot(monthly_sales_region, aes(x = Order_Month, y = Total_Sales, color = Region, group = Region)) +
+  geom_line(size = 1) +  # Line plot
+  geom_point(size = 3) +  # We can add points for clarity
+  labs(
+    title = "Monthly Sales Trend by Region",
+    x = "Month",
+    y = "Total Sales",
+    color = "Region"
+  )
+
+```
+#Making a line-chart vizualization of sales trends overtime
+```{r}
+# Extract Year and Month, and create a new Date column (first day of the month)
+monthly_sales <- dataset %>%
+  mutate(Order_YearMonth = floor_date(`Order Date`, unit = "month")) %>%  # Round to first day of the month
+  group_by(Order_YearMonth) %>%
+  summarise(Total_Sales = sum(Sales, na.rm = TRUE), .groups = "drop")
+
+# Plot the total sales trend over time
+ggplot(monthly_sales, aes(x = Order_YearMonth, y = Total_Sales)) +
+  geom_line(color = "blue", size = 1) +  # Line plot
+  labs(
+    title = "Monthly Sales Trend Over Time",
+    x = "Year-Month",
+    y = "Total Sales"
+  ) +
+  theme_minimal()
+```
+#making a bar-chart vizualization of total sales per category
+
+```{r}
+# Aggregatting total sales per category
+category_sales <- dataset %>% group_by(Category) %>% summarise(Total_Sales = sum(Sales, na.rm = TRUE), .groups = "drop") %>% arrange(desc(Total_Sales))  # Sort in descending order
+
+# Displaying the result
+print(category_sales)
+
+# Plotting the bar chart
+ggplot(category_sales, aes(x = reorder(Category, Total_Sales), y = Total_Sales, fill = Category)) +
+  geom_bar(stat = "identity", show.legend = FALSE) +  # The bar chart
+  labs(
+    title = "Top Categories by Total Sales",
+    x = "Category",
+    y = "Total Sales"
+  )
+```
+#making a bar-chart vizualization of total sales pre sub-category
+```{r}
+# Aggregattingtotal sales per sub-category
+sub_category_sales <- dataset %>% group_by(`Sub-Category`) %>% summarise(Total_Sales = sum(Sales, na.rm = TRUE), .groups = "drop") %>%
+  arrange(desc(Total_Sales))  # Sort in descending order
+
+# Display the result
+print(sub_category_sales)
+
+# Plotting the bar chart
+ggplot(sub_category_sales, aes(x = reorder(`Sub-Category`, Total_Sales), y = Total_Sales, fill = `Sub-Category`)) + geom_bar(stat = "identity", show.legend = FALSE) +  # Making the bar chart
+  coord_flip() +  # We have to flip coordinates for better readability
+  labs(
+    title = "Top Sub-Categories by Total Sales",
+    x = "Sub-Category",
+    y = "Total Sales"
+  )
+
+```
+#Creating another pivot table to summarize sales by Region and Month
+```{r}
+# Loading library for making a pivot table
+library(tidyr)
+
+# Create a pivot table summarizing total sales by Category and Segment
+pivot_table <- dataset %>% group_by(Category, Segment) %>%  # Grouping by Category and Segment
+  summarise(Total_Sales = sum(Sales, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(names_from = Segment, values_from = Total_Sales, values_fill = list(Total_Sales = 0))  # Reshaping so that it is more space efficient, and columns are not named as segment, and total sales (improved with chatgpt (OPENAI, 2024))
+
+# Displaying the pivot table
+print(pivot_table)
+
+```
+#Predicting Future Sales with Regression
+#Aggregate sales data by month and plot the monthly sales trend
+```{r}
+# Double checking to make sure Order Date is in Date format
+dataset$`Order Date` <- as.Date(dataset$`Order Date`, format = "%m/%d/%Y")
+
+# Extracting Month as an ordered factor for correct sorting
+dataset <- dataset %>% mutate(Order_Month = factor(month(`Order Date`, label = TRUE, abbr = TRUE), levels = month.abb))
+
+# Creating a pivot table summarizing total sales by Region and Month
+pivot_table_region_month <- dataset %>%
+  group_by(Region, Order_Month) %>%  # Group by Region and Month
+  summarise(Total_Sales = sum(Sales, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(names_from = Order_Month, values_from = Total_Sales, values_fill = list(Total_Sales = 0))  # Reshape
+
+# Displaying the pivot table
+print(pivot_table_region_month)
+
+```
+#Use a simple linear regression model to predict total sales for the next 3 months
+```{r}
+# Double chekcing to make sure Order Date is in Date format
+dataset$`Order Date` <- as.Date(dataset$`Order Date`, format = "%m/%d/%Y")
+
+# Extracting Year and Month, and create a new Date column. 
+monthly_sales <- dataset %>%
+  mutate(Order_YearMonth = floor_date(`Order Date`, unit = "month")) %>% group_by(Order_YearMonth) %>% summarise(Total_Sales = sum(Sales, na.rm = TRUE), .groups = "drop") #we assign everything to first date of that month to avoid confusion or some weird errors
+
+# Creating a time index for the model
+monthly_sales <- monthly_sales %>%
+  mutate(Time_Index = as.numeric(as.factor(Order_YearMonth)))  # Convert dates to sequential numbers
+
+# Fitting a simple linear regression model
+sales_lm <- lm(Total_Sales ~ Time_Index, data = monthly_sales)
+
+# Generating the summary of the model, of various performance metrics and etc. 
+summary(sales_lm)
+
+# Creating a data frame for the next 3 months
+future_time_index <- max(monthly_sales$Time_Index) + 1:3
+future_dates <- seq(from = max(monthly_sales$Order_YearMonth) + months(1), by = "month", length.out = 3)
+
+# Predicting sales using the regression model
+future_sales <- predict(sales_lm, newdata = data.frame(Time_Index = future_time_index))
+
+# Creating a data frame with predictions
+future_sales_df <- data.frame(
+  Order_YearMonth = future_dates,
+  Predicted_Sales = future_sales
+)
+
+# Printing out the predicted sales for the next 3 months, to check for exact numeric values
+print(future_sales_df)
+
+# Combining actual and predicted sales for plotting
+combined_sales <- bind_rows(
+  monthly_sales %>% select(Order_YearMonth, Total_Sales) %>% rename(Sales = Total_Sales),
+  future_sales_df %>% rename(Sales = Predicted_Sales)
+)
+
+# Plot the actual and predicted sales
+ggplot(combined_sales, aes(x = Order_YearMonth, y = Sales)) +
+  geom_line(color = "blue", size = 1) +
+  geom_point(data = future_sales_df, aes(x = Order_YearMonth, y = Predicted_Sales), color = "green", size = 2) +
+  labs(
+    title = "Sales Prediction for Next 3 Months",
+    x = "Month",
+    y = "Total Sales"
+  ) # chatgpt was used here, primarily to find names of functions and the whole structure (OPENAI, 2025)
+```
+#Evaluating the regression model using metrics like Mean Absolute Error (MAE) and Root Mean Squared Error (RMSE)
+```{r}
+# Make predictions on the training data
+predicted_sales <- predict(sales_lm, newdata = data.frame(Time_Index = monthly_sales$Time_Index))
+
+# Compute residuals (errors)
+errors <- monthly_sales$Total_Sales - predicted_sales
+
+# Calculate Mean Absolute Error (MAE)
+mae <- mean(abs(errors))
+
+# Calculate Root Mean Squared Error (RMSE)
+rmse <- sqrt(mean(errors^2))
+
+# Print evaluation metrics using print()
+print("Model Evaluation Metrics:")
+print(paste("Mean Absolute Error (MAE):", mae))
+print(paste("Root Mean Squared Error (RMSE):", rmse))
+
+```
+#Experimenting with the regression model by tweaking the data or trying variations to understand how it impacts predictions
+```{r}
+# Fit a quadratic regression model
+sales_poly_lm <- lm(Total_Sales ~ Time_Index + I(Time_Index^2), data = monthly_sales)
+
+# Predict sales with the polynomial model
+predicted_poly <- predict(sales_poly_lm, newdata = data.frame(Time_Index = monthly_sales$Time_Index))
+
+# Compute RMSE for polynomial model
+errors_poly <- monthly_sales$Total_Sales - predicted_poly
+rmse_poly <- sqrt(mean(errors_poly^2))
+
+# Compare RMSE
+cat("RMSE - Linear Model:", rmse, "\n")
+cat("RMSE - Quadratic Model:", rmse_poly, "\n")
+
+# Apply log transformation to Sales
+monthly_sales <- monthly_sales %>%
+  mutate(Log_Sales = log(Total_Sales))
+
+# Fit a linear model on log-transformed sales
+sales_log_lm <- lm(Log_Sales ~ Time_Index, data = monthly_sales)
+
+# Predict sales using the log model
+predicted_log <- exp(predict(sales_log_lm, newdata = data.frame(Time_Index = monthly_sales$Time_Index)))
+
+# Compute RMSE for log model
+errors_log <- monthly_sales$Total_Sales - predicted_log
+rmse_log <- sqrt(mean(errors_log^2))
+
+# Compare RMSE
+cat("RMSE - Linear Model:", rmse, "\n")
+cat("RMSE - Log Model:", rmse_log, "\n")
+# Some of code was generated with Chatgpt(OPENAI, 2025)
+```
+
